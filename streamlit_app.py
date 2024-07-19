@@ -126,7 +126,6 @@ def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
 def is_valid_variable_name(name):
     return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
 
-# Initialize session state for custom metrics if it doesn't exist
 if 'custom_metrics' not in st.session_state:
     st.session_state.custom_metrics = {}
 
@@ -157,6 +156,7 @@ if selected_metric == "Create New Prompt":
                     st.success("Prompt generated successfully!")
                     st.session_state.temp_prompt = generated_prompt
                     st.session_state.original_prompt = generated_prompt  # Store the original prompt
+                    st.session_state.metric_name = metric_name
                     st.experimental_rerun()
                 else:
                     st.error("Failed to generate prompt.")
@@ -175,6 +175,7 @@ if selected_metric == "Create New Prompt":
             st.session_state.custom_metrics[metric_name] = edited_prompt
             del st.session_state.temp_prompt
             del st.session_state.original_prompt
+            del st.session_state.metric_name
             st.success(f"Prompt for '{metric_name}' saved successfully!")
             st.experimental_rerun()
 
