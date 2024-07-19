@@ -142,7 +142,7 @@ if selected_metric == "Create New Prompt":
     criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
     scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
     use_case = st.selectbox("Use Case", ["Ground truth", "RAG", "Other"])
-    examples = st.text_area("Examples", placeholder="Enter examples here...", height = 400)
+    examples = st.text_area("Examples", placeholder="Enter examples here...", height = 250)
 
     if st.button("Generate Prompt"):
         if not metric_name or not is_valid_variable_name(metric_name):
@@ -166,7 +166,7 @@ if selected_metric == "Create New Prompt":
     # Edit and Save section for newly generated prompt
     if 'temp_prompt' in st.session_state:
         st.subheader("Original Generated Prompt")
-        st.text_area("Original Prompt", value=st.session_state.original_prompt, height=200, disabled=True)
+        st.text_area("Original Prompt", value=st.session_state.original_prompt, height=300, disabled=True)
 
         st.subheader("Edit the Generated Prompt")
         edited_prompt = st.text_area("Edit Prompt", value=st.session_state.temp_prompt, height=300)
