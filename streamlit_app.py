@@ -126,6 +126,13 @@ def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
 def is_valid_variable_name(name):
     return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
 
+# List of reserved metric names
+reserved_metrics = [
+    "hallucination", "context_relevance", "recall", "precision",
+    "logical_coherence", "recall_gpt", "naturalness",
+    "atla_groundedness", "atla_precision", "atla_recall"
+]
+
 if 'custom_metrics' not in st.session_state:
     st.session_state.custom_metrics = {}
 
@@ -140,12 +147,14 @@ if selected_metric == "Create New Prompt":
     metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
     criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
     scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
-    use_case = st.selectbox("Use Case", ["Ground truth", "RAG", "Other"])
+    use_case = st.selectbox("Task", ["Ground truth", "RAG", "Other"])
     examples = st.text_area("Examples", placeholder="Enter examples here...", height = 250)
 
     if st.button("Generate Prompt"):
         if not metric_name or not is_valid_variable_name(metric_name):
             st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
+        elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
+            st.error("Please choose a metric name that is not one of the Atla base metrics.")
         elif not criteria or not scoring_rubric or not use_case:
             st.error("Please fill in all required fields.")
         else:
