@@ -39,7 +39,7 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
                     - Provide a concise justification for the assigned score, focusing strictly on how well the AI's response mirrors the reference in terms of precision, relevance, directness, and conciseness. Highlight even minor discrepancies in high-scoring responses to justify not achieving a perfect score.
 
                 - **Examples for guidance:**
-                [Few-shot examples given by the user]'""",
+                [Few-shot examples given by the user]'"""
     elif set(input_variables) == {'input', 'response', 'context'}:
         system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
 
@@ -98,7 +98,7 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
                 - **Examples for guidance:**
                 [Few-shot examples given by the user]"""
         
-    elif set(input_variables) == ["input", "response", "context", "reference"]:
+    elif set(input_variables) == {"input", "response", "context", "reference"}:
         system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
         '### Hallucination Detection Evaluation:
         Example Format
@@ -168,79 +168,145 @@ reserved_metrics = [
 if 'custom_metrics' not in st.session_state:
     st.session_state.custom_metrics = {}
 
+###
 st.title("Evaluation Prompt Generator")
 
-# Dropdown for existing metrics at the top
-metric_options = ["Create New Prompt"] + list(st.session_state.custom_metrics.keys())
-selected_metric = st.selectbox("Select a metric to view/edit or create a new one", metric_options)
 
-st.subheader("Create New Evaluation Prompt")
-metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
-criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
-scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
+# Create two columns for metric name and suggestions
+col1, col2 = st.columns([2, 1])
 
-# Update 'Input variables' multi-select to include 'input' and 'response'
-input_variables = st.multiselect("Input variables", ["input", "response", "reference", "context"], default=["input", "response"])
+with col1:
+    metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
 
-compulsory_selected = set(["input", "response"]).issubset(set(input_variables))
+with col2:
+    # Autocomplete suggestions
+    suggestions = list(st.session_state.custom_metrics.keys())
+    if metric_name:
+        matching_suggestions = [s for s in suggestions if metric_name.lower() in s.lower()]
+        if matching_suggestions:
+            selected_suggestion = st.selectbox("Did you mean?", [""] + matching_suggestions)
+            if selected_suggestion:
+                metric_name = selected_suggestion
+                
+                
 
-if not compulsory_selected:
-    st.warning("'input' and 'response' are compulsory variables and must be selected.")
-
-st.write("Selected input variables:", ", ".join(input_variables))
-
-
-examples = st.text_area("Examples", placeholder="Enter examples here...", height=250)
-
-if st.button("Generate Prompt", disabled=not compulsory_selected):
-    if not metric_name or not is_valid_variable_name(metric_name):
-        st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
-    elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
-        st.error("Please choose a metric name that is not one of the Atla base metrics.")
-    elif not criteria or not scoring_rubric:
-        st.error("Please fill in all required fields.")
-    else:
-        try:
-            with st.spinner("Generating prompt..."):
-                generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
-            if generated_prompt:
-                st.success("Prompt generated successfully!")
-                st.session_state.temp_prompt = generated_prompt
-                st.session_state.original_prompt = generated_prompt  # Store the original prompt
-                st.session_state.metric_name = metric_name
-                st.experimental_rerun()
-            else:
-                st.error("Failed to generate prompt.")
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
-
-    # Edit and Save section for newly generated prompt
-    if 'temp_prompt' in st.session_state:
-        st.subheader("Original Generated Prompt")
-        st.text_area("Original Prompt", value=st.session_state.original_prompt, height=300, disabled=True)
-
-        st.subheader("Edit the Generated Prompt")
-        edited_prompt = st.text_area("Edit Prompt", value=st.session_state.temp_prompt, height=300)
-        
-        if st.button("Save Prompt"):
-            st.session_state.custom_metrics[metric_name] = edited_prompt
-            del st.session_state.temp_prompt
-            del st.session_state.original_prompt
-            del st.session_state.metric_name
-            st.success(f"Prompt for '{metric_name}' saved successfully!")
-            st.experimental_rerun()
-
-elif selected_metric in st.session_state.custom_metrics:
-    st.subheader(f"Editing: {selected_metric}")
-    edited_prompt = st.text_area("Edit Prompt", value=st.session_state.custom_metrics[selected_metric], height=300)
+# Check if the metric name exists in custom_metrics
+if metric_name in st.session_state.custom_metrics:
+    # Populate fields with existing data
+    metric_data = st.session_state.custom_metrics[metric_name]
+    criteria = st.text_area("Criteria", value=metric_data["criteria"])
+    scoring_rubric = st.text_input("Scoring Rubric", value=metric_data["scoring_rubric"])
+    st.write("Select Input Variables (input and response are compulsory):")
+    input_variables = st.multiselect(
+        "Input variables",
+        ["input", "response", "reference", "context"],
+        default=metric_data["input_variables"]
+    )
+    examples = st.text_area("Examples", value=metric_data["examples"], height=250)
+    st.subheader("Edit the Generated Prompt")
+    edited_prompt = st.text_area("Edit Prompt", value=metric_data["prompt"], height=300)
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Save Changes"):
-            st.session_state.custom_metrics[selected_metric] = edited_prompt
+            st.session_state.custom_metrics[metric_name] = {
+                "criteria": criteria,
+                "scoring_rubric": scoring_rubric,
+                "input_variables": input_variables,
+                "examples": examples,
+                "prompt": edited_prompt
+            }
             st.success("Changes saved successfully!")
     with col2:
         if st.button("Delete Metric"):
-            del st.session_state.custom_metrics[selected_metric]
-            st.success(f"Metric '{selected_metric}' deleted successfully!")
+            del st.session_state.custom_metrics[metric_name]
+            st.success(f"Metric '{metric_name}' deleted successfully!")
             st.experimental_rerun()
+    with col3:
+        if st.button("Regenerate Prompt"):
+            try:
+                with st.spinner("Regenerating prompt..."):
+                    generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
+                if generated_prompt:
+                    st.session_state.custom_metrics[metric_name]["prompt"] = generated_prompt
+                    st.success("Prompt regenerated successfully!")
+                    st.experimental_rerun()
+                else:
+                    st.error("Failed to regenerate prompt.")
+            except Exception as e:
+                st.error(f"An error occurred: {str(e)}")
+
+else:
+    # Fields for creating a new metric
+    criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
+    scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
+    
+    st.write("Select Input Variables (input and response are compulsory):")
+    input_variables = st.multiselect(
+        "Input variables",
+        ["input", "response", "reference", "context"],
+        default=["input", "response"]
+    )
+    
+    compulsory_selected = set(["input", "response"]).issubset(set(input_variables))
+    
+    if not compulsory_selected:
+        st.warning("'input' and 'response' are compulsory variables and must be selected.")
+    
+    examples = st.text_area("Examples", placeholder="Enter examples here...", height=250)
+
+    if st.button("Generate Prompt", disabled=not compulsory_selected):
+        if not metric_name or not is_valid_variable_name(metric_name):
+            st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
+        elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
+            st.error("Please choose a metric name that is not one of the Atla base metrics.")
+        elif not criteria or not scoring_rubric:
+            st.error("Please fill in all required fields.")
+        else:
+            try:
+                with st.spinner("Generating prompt..."):
+                    generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
+                if generated_prompt:
+                    st.success("Prompt generated successfully!")
+                    st.session_state.temp_prompt = generated_prompt
+                    
+                    # Store the inputs
+                    st.session_state.custom_metrics[metric_name] = {
+                        "criteria": criteria,
+                        "scoring_rubric": scoring_rubric,
+                        "input_variables": input_variables,
+                        "examples": examples,
+                        "prompt": generated_prompt
+                    }
+                    
+                    st.experimental_rerun()
+                else:
+                    st.error("Failed to generate prompt.")
+            except Exception as e:
+                st.error(f"An error occurred: {str(e)}")
+
+    # Edit and Save section for newly generated prompt
+    if 'temp_prompt' in st.session_state:
+        st.subheader("Edit the Generated Prompt")
+        edited_prompt = st.text_area("Edit Prompt", value=st.session_state.temp_prompt, height=300)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Save Prompt"):
+                st.session_state.custom_metrics[metric_name]["prompt"] = edited_prompt
+                del st.session_state.temp_prompt
+                st.success(f"Prompt for '{metric_name}' saved successfully!")
+                st.experimental_rerun()
+        with col2:
+            if st.button("Regenerate Prompt"):
+                try:
+                    with st.spinner("Regenerating prompt..."):
+                        generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
+                    if generated_prompt:
+                        st.session_state.temp_prompt = generated_prompt
+                        st.success("Prompt regenerated successfully!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to regenerate prompt.")
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
