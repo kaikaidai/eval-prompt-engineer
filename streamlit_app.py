@@ -7,10 +7,10 @@ import os
 
 openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
+def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
 
-    if use_case == "Ground truth":
-        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
+    if set(input_variables) == {'input', 'response', 'reference'}:
+        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
                 '### **Precision and Conciseness Evaluation:**
                 **Example Format**
 
@@ -39,9 +39,9 @@ def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
                     - Provide a concise justification for the assigned score, focusing strictly on how well the AI's response mirrors the reference in terms of precision, relevance, directness, and conciseness. Highlight even minor discrepancies in high-scoring responses to justify not achieving a perfect score.
 
                 - **Examples for guidance:**
-                [Few-shot examples if given]'""",
-    elif use_case == "RAG":
-        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
+                [Few-shot examples given by the user]'""",
+    elif set(input_variables) == {'input', 'response', 'context'}:
+        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
 
                 ### **Contextual Groundedness Evaluation**
 
@@ -75,9 +75,9 @@ def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
                 3. **Feedback**: Provide focused feedback on how well the response adheres to the context. Identify specific instances where the AI effectively used or failed to use contextual cues, discussing the impact of these cues on the accuracy and relevance of the answer. Keep the feedback succinct and targeted, directly addressing the response's strengths and areas for improvement in terms of contextual groundedness.
 
                 - **Examples for guidance:**
-                [Few-shot examples if given]"""
-    else:
-        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
+                [Few-shot examples given by the user]"""
+    elif set(input_variables) == {'input', 'response'}:
+        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
 
                 ### **Formattings:**
 
@@ -96,9 +96,42 @@ def generate_prompt(criteria, scoring_rubric, use_case, examples=None):
                 - Provide feedback listing the different formats detected in the response, in order of appearance. For example: ['table', 'unformatted text']. The types of formatting used should be listed separated by commas, and the string returned should be wrapped in square brackets.
 
                 - **Examples for guidance:**
-                [Few-shot examples if given]"""
+                [Few-shot examples given by the user]"""
+        
+    elif set(input_variables) == ["input", "response", "context", "reference"]:
+        system_prompt = """Please create an evaluation prompt based on the user specified criteria and scoring rubric (and additionally some examples if defined in the user prompt). The scoring rubric in the prompt should always be as the user defines it (e.g., the score range should be 1 - 3 if the user defines it as such rather than the 1 - 5 in the example below). You can use the below template as a guide for how it should be set up:
+        '### Hallucination Detection Evaluation:
+        Example Format
 
-    user_prompt = f"Evalutaion criteria: {criteria}\nScoring rubric: {scoring_rubric}"
+        QUESTION:
+
+        CONTEXT:
+
+        REFERENCE RESPONSE:
+
+        AI ASSISTANT ANSWER:
+
+        —
+
+        SCORE:
+
+        CRITIQUE:
+
+        **Objective: Identify any claims in the AI response that are not supported by either the context or the reference response. Score responses from 1 (worst) to 3 (best).
+        Process:
+        Analyze: Carefully compare the AI's response against both the context and the reference response to detect unsupported claims (hallucinations).
+        Scoring:
+        1 (Poor): The response includes significant hallucinations not supported by the context or reference response.
+        2 (Fair): The response has some minor hallucinations, but the overall message aligns with the context and reference response.
+        3 (Good): The response contains no hallucinations and is fully supported by the context and reference response.
+        Feedback:
+        
+        Provide a concise justification for the assigned score, highlighting any hallucinations and explaining why they affect the response's accuracy and relevance.
+
+        Examples for guidance:
+        [Few-shot examples given by the user]"""
+
+    user_prompt = f"Evaluation criteria: {criteria}\nScoring rubric: {scoring_rubric}"
 
     if examples:
         user_prompt += f"\nFew shot examples: {examples}"
@@ -129,8 +162,7 @@ def is_valid_variable_name(name):
 # List of reserved metric names
 reserved_metrics = [
     "hallucination", "context_relevance", "recall", "precision",
-    "logical_coherence", "recall_gpt", "naturalness",
-    "atla_groundedness", "atla_precision", "atla_recall"
+    "logical_coherence", "recall_gpt", "atla_groundedness", "atla_precision", "atla_recall"
 ]
 
 if 'custom_metrics' not in st.session_state:
@@ -142,35 +174,45 @@ st.title("Evaluation Prompt Generator")
 metric_options = ["Create New Prompt"] + list(st.session_state.custom_metrics.keys())
 selected_metric = st.selectbox("Select a metric to view/edit or create a new one", metric_options)
 
-if selected_metric == "Create New Prompt":
-    st.subheader("Create New Evaluation Prompt")
-    metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
-    criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
-    scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
-    use_case = st.selectbox("Task", ["Ground truth", "RAG", "Other"])
-    examples = st.text_area("Examples", placeholder="Enter examples here...", height = 250)
+st.subheader("Create New Evaluation Prompt")
+metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
+criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
+scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
 
-    if st.button("Generate Prompt"):
-        if not metric_name or not is_valid_variable_name(metric_name):
-            st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
-        elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
-            st.error("Please choose a metric name that is not one of the Atla base metrics.")
-        elif not criteria or not scoring_rubric or not use_case:
-            st.error("Please fill in all required fields.")
-        else:
-            try:
-                with st.spinner("Generating prompt..."):
-                    generated_prompt = generate_prompt(use_case, criteria, scoring_rubric, examples)
-                if generated_prompt:
-                    st.success("Prompt generated successfully!")
-                    st.session_state.temp_prompt = generated_prompt
-                    st.session_state.original_prompt = generated_prompt  # Store the original prompt
-                    st.session_state.metric_name = metric_name
-                    st.experimental_rerun()
-                else:
-                    st.error("Failed to generate prompt.")
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
+# Update 'Input variables' multi-select to include 'input' and 'response'
+input_variables = st.multiselect("Input variables", ["input", "response", "reference", "context"], default=["input", "response"])
+
+compulsory_selected = set(["input", "response"]).issubset(set(input_variables))
+
+if not compulsory_selected:
+    st.warning("'input' and 'response' are compulsory variables and must be selected.")
+
+st.write("Selected input variables:", ", ".join(input_variables))
+
+
+examples = st.text_area("Examples", placeholder="Enter examples here...", height=250)
+
+if st.button("Generate Prompt", disabled=not compulsory_selected):
+    if not metric_name or not is_valid_variable_name(metric_name):
+        st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
+    elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
+        st.error("Please choose a metric name that is not one of the Atla base metrics.")
+    elif not criteria or not scoring_rubric:
+        st.error("Please fill in all required fields.")
+    else:
+        try:
+            with st.spinner("Generating prompt..."):
+                generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
+            if generated_prompt:
+                st.success("Prompt generated successfully!")
+                st.session_state.temp_prompt = generated_prompt
+                st.session_state.original_prompt = generated_prompt  # Store the original prompt
+                st.session_state.metric_name = metric_name
+                st.experimental_rerun()
+            else:
+                st.error("Failed to generate prompt.")
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
 
     # Edit and Save section for newly generated prompt
     if 'temp_prompt' in st.session_state:
