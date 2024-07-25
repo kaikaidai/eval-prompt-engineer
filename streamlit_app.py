@@ -134,7 +134,7 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
     user_prompt = f"Evaluation criteria: {criteria}\nScoring rubric: {scoring_rubric}"
 
     if examples:
-        user_prompt += f"\nFew shot examples: {examples}"
+        user_prompt += f"\nFew shot examples: \n\n{examples}"
 
 
     messages = [
@@ -144,7 +144,7 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
     ]
 
     completion = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-3.5-turbo",
         messages=messages
     )
 
@@ -159,34 +159,104 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
 def is_valid_variable_name(name):
     return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
 
-# List of reserved metric names
-reserved_metrics = [
-    "hallucination", "context_relevance", "recall", "precision",
-    "logical_coherence", "recall_gpt", "atla_groundedness", "atla_precision", "atla_recall"
-]
+def clear_temp_state():
+    if 'temp_prompt' in st.session_state:
+        del st.session_state.temp_prompt
+        print("temp_prompt deleted")
+    st.session_state.show_edit_prompt = False
+
+def update_metric_name():
+    if st.session_state.quick_select != "":
+        st.session_state.metric_name = st.session_state.quick_select
+    elif st.session_state.metric_name not in st.session_state.custom_metrics and st.session_state.metric_name not in reserved_metrics:
+        st.session_state.quick_select = ""
+        st.session_state.show_edit_prompt = False
+
+def initialize_new_metric(metric_name):
+    return {
+        "criteria": "",
+        "scoring_rubric": "Likert: 1 - 5",  # Default to the first option
+        "input_variables": ["input", "response"],
+        "prompt": "",
+        "examples": [{}]
+    }
+
+
+reserved_metric_info = {
+    "hallucination": {
+        "criteria": "Assesses presence of incorrect of unrelated content in the AI’s response.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response", "reference"]
+    },
+    "context_relevance": {
+        "criteria": "Measures how on-point the retrieved context is.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response", "context"]
+    },
+
+    "groundedness": {
+        "criteria": "Determines if the response is factually based on the provided context.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response", "context"]
+    },
+
+    "precision": {
+        "criteria": "Assesses the relevance of all the information in the response.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response", "reference"]
+    },
+    
+    "logical_coherence": {
+        "criteria": "Measures the logical flow, consistency, and rationality of the response.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response"]
+    },
+    
+    "recall": {
+        "criteria": "Measures how complete the response captures the key facts and details.",
+        "scoring_rubric": "Likert: 1 - 5",
+        "input_variables": ["input", "response", "reference"]
+    }
+    # Add information for other reserved metrics here
+}
+
+reserved_metrics = list(reserved_metric_info.keys())
 
 if 'custom_metrics' not in st.session_state:
     st.session_state.custom_metrics = {}
 
+if 'editing_metric' not in st.session_state:
+    st.session_state.editing_metric = False
+
 ###
-st.title("Evaluation Prompt Generator")
+st.title("Create Evaluation Metrics")
 
+if 'custom_metrics' not in st.session_state:
+    st.session_state.custom_metrics = {}
 
-# Create two columns for metric name and suggestions
-col1, col2 = st.columns([2, 1])
+if 'show_edit_prompt' not in st.session_state:
+    st.session_state.show_edit_prompt = False
 
-with col1:
-    metric_name = st.text_input("Metric Name", placeholder="Enter a name for this metric...")
+# Add Eval Metrics Library to the sidebar
+st.sidebar.title("Eval Metrics Library")
 
-with col2:
-    # Autocomplete suggestions
-    suggestions = list(st.session_state.custom_metrics.keys())
-    if metric_name:
-        matching_suggestions = [s for s in suggestions if metric_name.lower() in s.lower()]
-        if matching_suggestions:
-            selected_suggestion = st.selectbox("Did you mean?", [""] + matching_suggestions)
-            if selected_suggestion:
-                metric_name = selected_suggestion
+# Display Base Metrics
+st.sidebar.subheader("Base Metrics:")
+st.sidebar.text("\n".join(reserved_metrics))
+
+# Display Custom Metrics
+st.sidebar.subheader("Custom Metrics:")
+custom_metrics = list(st.session_state.custom_metrics.keys())
+if custom_metrics:
+    st.sidebar.text("\n".join(custom_metrics))
+else:
+    st.sidebar.text("No custom metrics created yet.")
+
+# Add a separator
+st.sidebar.markdown("---")
+
+metric_name = st.text_input("Metric Name", key="metric_name", placeholder="Enter a name for this metric...")
+
                 
                 
 
@@ -195,26 +265,80 @@ if metric_name in st.session_state.custom_metrics:
     # Populate fields with existing data
     metric_data = st.session_state.custom_metrics[metric_name]
     criteria = st.text_area("Criteria", value=metric_data["criteria"])
-    scoring_rubric = st.text_input("Scoring Rubric", value=metric_data["scoring_rubric"])
-    st.write("Select Input Variables (input and response are compulsory):")
+    scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
+
+    default_index = 0
+    saved_rubric = metric_data.get("scoring_rubric", "")
+    if saved_rubric in scoring_rubric_options:
+        default_index = scoring_rubric_options.index(saved_rubric)
+    scoring_rubric = st.selectbox("Scoring Rubric", options=scoring_rubric_options, index=default_index)
+
+    st.write("Select Input Variables (input and response are required):")
     input_variables = st.multiselect(
         "Input variables",
         ["input", "response", "reference", "context"],
         default=metric_data["input_variables"]
     )
-    examples = st.text_area("Examples", value=metric_data["examples"], height=250)
+    
+    st.subheader("Few-shot examples")
+
+    # Dropdown to select example number
+    example_options = [f"Example {i}" for i in range(1, len(metric_data['examples']) + 1)]
+    example_number = st.selectbox("Select example", options=example_options)
+
+
+    # Button to add a new example (up to 3)
+    if len(metric_data['examples']) < 3 and st.button("Add another example"):
+        metric_data['examples'].append({})
+        st.experimental_rerun()  # Rerun to update the selectbox options
+
+    # Extract the number from the selected option
+    selected_index = int(example_number.split()[-1]) - 1
+
+    # Display fields for the selected example
+    with st.expander(example_number, expanded=True):
+        example = metric_data['examples'][selected_index]
+        
+        example['input'] = st.text_area("Input", value=example.get('input', ''), key=f"input_{metric_name}_{selected_index}", placeholder="Enter example input here...")
+        example['response'] = st.text_area("Response", value=example.get('response', ''), key=f"response_{metric_name}_{selected_index}", placeholder="Enter example response here...")
+
+        # Conditional inputs based on selected input variables
+        if "reference" in input_variables:
+            example['reference'] = st.text_area("Reference", value=example.get('reference', ''), key=f"reference_{metric_name}_{selected_index}", placeholder="Enter example reference here...")
+        if "context" in input_variables:
+            example['context'] = st.text_area("Context", value=example.get('context', ''), key=f"context_{metric_name}_{selected_index}", placeholder="Enter example context here...")
+
+        example['score'] = st.text_input("Score", value=example.get('score', ''), key=f"score_{metric_name}_{selected_index}", placeholder="Enter example score here...")
+        example['critique'] = st.text_area("Critique", value=example.get('critique', ''), key=f"critique_{metric_name}_{selected_index}", placeholder="Enter example critique here...")
+
+        # Update the metric data
+        metric_data['examples'][selected_index] = example
+
+    # Combine all examples to form the 'Examples' variable for the Prompt generation
+    examples = ""
+    for i, example in enumerate(metric_data['examples'], 1):
+        examples += f"Example {i}:\n"
+        examples += f"Input: {example.get('input', '')}\n\n"
+        examples += f"Response: {example.get('response', '')}\n\n"
+        if "reference" in input_variables:
+            examples += f"Reference: {example.get('reference', '')}\n\n"
+        if "context" in input_variables:
+            examples += f"Context: {example.get('context', '')}\n\n"
+        examples += f"Score: {example.get('score', '')}\n\n"
+        examples += f"Critique: {example.get('critique', '')}\n\n"
+    
     st.subheader("Edit the Generated Prompt")
     edited_prompt = st.text_area("Edit Prompt", value=metric_data["prompt"], height=300)
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("Save Changes"):
+        if st.button("Deploy Metric"):
             st.session_state.custom_metrics[metric_name] = {
                 "criteria": criteria,
                 "scoring_rubric": scoring_rubric,
                 "input_variables": input_variables,
-                "examples": examples,
-                "prompt": edited_prompt
+                "prompt": edited_prompt,
+                "examples": metric_data['examples']  # Save all examples
             }
             st.success("Changes saved successfully!")
     with col2:
@@ -235,13 +359,57 @@ if metric_name in st.session_state.custom_metrics:
                     st.error("Failed to regenerate prompt.")
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
+elif metric_name in reserved_metrics:
+    # Display information for reserved metrics
+    metric_info = reserved_metric_info.get(metric_name, {})
+    
+    st.text_area("Criteria", value=metric_info.get('criteria', 'N/A'), disabled=True)
+    
+    scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
+    st.selectbox("Scoring Rubric", options=scoring_rubric_options, 
+                 index=scoring_rubric_options.index(metric_info.get('scoring_rubric', 'Likert: 1 - 5')), 
+                 disabled=True)
+    
+    st.write("Select Input Variables (input and response are required):")
+    st.multiselect(
+        "Input variables",
+        ["input", "response", "reference", "context"],
+        default=metric_info.get('input_variables', ["input", "response"]),
+        disabled=True
+    )
+    
+    st.subheader("Few-shot examples")
+
+    # Display a single, non-interactive example
+    example_number = "Example 1"
+    st.selectbox("Select example", options=[example_number], disabled=True)
+
+    # Display fields for the example
+    with st.expander(example_number, expanded=True):
+        example = metric_info.get('examples', [{}])[0]  # Get the first (and only) example
+        
+        st.text_area("Input", value=example.get('input', 'N/A'), disabled=True)
+        st.text_area("Response", value=example.get('response', 'N/A'), disabled=True)
+
+        # Conditional inputs based on selected input variables
+        if "reference" in metric_info.get('input_variables', []):
+            st.text_area("Reference", value=example.get('reference', 'N/A'), disabled=True)
+        if "context" in metric_info.get('input_variables', []):
+            st.text_area("Context", value=example.get('context', 'N/A'), disabled=True)
+
+        st.text_input("Score", value=example.get('score', 'N/A'), disabled=True)
+        st.text_area("Critique", value=example.get('critique', 'N/A'), disabled=True)
+
+    st.write("This is a base metric. You cannot modify its properties.")
 
 else:
     # Fields for creating a new metric
-    criteria = st.text_area("Criteria", placeholder="Enter criteria here...")
-    scoring_rubric = st.text_input("Scoring Rubric", placeholder="Enter scoring rubric here...")
+    temp_metric_data = initialize_new_metric(metric_name)
     
-    st.write("Select Input Variables (input and response are compulsory):")
+    criteria = st.text_area("Criteria", value="", placeholder="Enter criteria here...")
+    scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
+    scoring_rubric = st.selectbox("Scoring Rubric", options=scoring_rubric_options, index=0)
+    st.write("Select Input Variables (input and response are required):")
     input_variables = st.multiselect(
         "Input variables",
         ["input", "response", "reference", "context"],
@@ -252,8 +420,55 @@ else:
     
     if not compulsory_selected:
         st.warning("'input' and 'response' are compulsory variables and must be selected.")
+
+    st.session_state.show_edit_prompt = False
+
+    # Initialize examples in session state if not present
+    st.subheader("Few-shot examples")
     
-    examples = st.text_area("Examples", placeholder="Enter examples here...", height=250)
+    # Dropdown to select example number
+    example_options = [f"Example {i}" for i in range(1, len(temp_metric_data['examples']) + 1)]
+    example_number = st.selectbox("Select example", options=example_options)
+
+    # Button to add a new example (up to 3)
+    if len(temp_metric_data['examples']) < 3 and st.button("Add another example"):
+        temp_metric_data['examples'].append({})
+        st.experimental_rerun()  # Rerun to update the selectbox options
+
+    # Extract the number from the selected option
+    selected_index = int(example_number.split()[-1]) - 1
+
+    # Display fields for the selected example
+    with st.expander(example_number, expanded=True):
+        example = temp_metric_data['examples'][selected_index]
+        
+        example['input'] = st.text_area("Input", value="", key=f"input_{metric_name}_{selected_index}", placeholder="Enter example input here...")
+        example['response'] = st.text_area("Response", value="", key=f"response_{metric_name}_{selected_index}", placeholder="Enter example response here...")
+
+        # Conditional inputs based on selected input variables
+        if "reference" in input_variables:
+            example['reference'] = st.text_area("Reference", value="", key=f"reference_{metric_name}_{selected_index}", placeholder="Enter example reference here...")
+        if "context" in input_variables:
+            example['context'] = st.text_area("Context", value="", key=f"context_{metric_name}_{selected_index}", placeholder="Enter example context here...")
+
+        example['score'] = st.text_input("Score", value="", key=f"score_{metric_name}_{selected_index}", placeholder="Enter example score here...")
+        example['critique'] = st.text_area("Critique", value="", key=f"critique_{metric_name}_{selected_index}", placeholder="Enter example critique here...")
+
+        # Update the temp metric data
+        temp_metric_data['examples'][selected_index] = example
+
+    # Combine all examples to form the 'Examples' variable
+    examples = ""
+    for i, example in enumerate(temp_metric_data['examples'], 1):
+        examples += f"Example {i}:\n"
+        examples += f"Input: {example.get('input', '')}\n\n"
+        examples += f"Response: {example.get('response', '')}\n\n"
+        if "reference" in input_variables:
+            examples += f"Reference: {example.get('reference', '')}\n\n"
+        if "context" in input_variables:
+            examples += f"Context: {example.get('context', '')}\n\n"
+        examples += f"Score: {example.get('score', '')}\n\n"
+        examples += f"Critique: {example.get('critique', '')}\n\n"
 
     if st.button("Generate Prompt", disabled=not compulsory_selected):
         if not metric_name or not is_valid_variable_name(metric_name):
@@ -269,40 +484,54 @@ else:
                 if generated_prompt:
                     st.success("Prompt generated successfully!")
                     st.session_state.temp_prompt = generated_prompt
-                    
-                    # Store the inputs
-                    st.session_state.custom_metrics[metric_name] = {
-                        "criteria": criteria,
-                        "scoring_rubric": scoring_rubric,
-                        "input_variables": input_variables,
-                        "examples": examples,
-                        "prompt": generated_prompt
-                    }
-                    
-                    st.experimental_rerun()
+                    st.session_state.editing_metric = metric_name
                 else:
                     st.error("Failed to generate prompt.")
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
 
     # Edit and Save section for newly generated prompt
-    if 'temp_prompt' in st.session_state:
+    if 'temp_prompt' in st.session_state and st.session_state.editing_metric == metric_name:
         st.subheader("Edit the Generated Prompt")
         edited_prompt = st.text_area("Edit Prompt", value=st.session_state.temp_prompt, height=300)
+        temp_metric_data['prompt'] = edited_prompt
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
-            if st.button("Save Prompt"):
-                st.session_state.custom_metrics[metric_name]["prompt"] = edited_prompt
-                del st.session_state.temp_prompt
-                st.success(f"Prompt for '{metric_name}' saved successfully!")
-                st.experimental_rerun()
+            if st.button("Deploy Metric"):
+                if not metric_name or not is_valid_variable_name(metric_name):
+                    st.error("Please enter a valid metric name. It should start with a letter or underscore and contain only letters, numbers, or underscores.")
+                elif metric_name.lower() in [m.lower() for m in reserved_metrics]:
+                    st.error("Please choose a metric name that is not one of the Atla base metrics.")
+                elif not criteria or not scoring_rubric:
+                    st.error("Please fill in all required fields.")
+                else:
+                    st.session_state.custom_metrics[metric_name] = {
+                        "criteria": criteria,
+                        "scoring_rubric": scoring_rubric,
+                        "input_variables": input_variables,
+                        "prompt": edited_prompt,
+                        "examples": temp_metric_data['examples']
+                    }                            
+                    st.write(f"Debug: Custom metrics after deployment: {st.session_state.custom_metrics}")
+                    st.success(f"Metric '{metric_name}' deployed successfully!")
+                    del st.session_state.temp_prompt
+                    del st.session_state.editing_metric
+                    st.experimental_rerun()
+        
+                        
         with col2:
+            if st.button("Clear"):
+                del st.session_state.temp_prompt
+                del st.session_state.editing_metric
+                st.experimental_rerun()
+        with col3:
             if st.button("Regenerate Prompt"):
                 try:
                     with st.spinner("Regenerating prompt..."):
                         generated_prompt = generate_prompt(input_variables, criteria, scoring_rubric, examples)
                     if generated_prompt:
+                        temp_metric_data['prompt'] = generated_prompt
                         st.session_state.temp_prompt = generated_prompt
                         st.success("Prompt regenerated successfully!")
                         st.experimental_rerun()
