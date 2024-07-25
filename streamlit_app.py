@@ -3,6 +3,7 @@ import textwrap
 from openai import OpenAI
 import re
 import os
+import json
 
 
 openai_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
@@ -156,6 +157,60 @@ def generate_prompt(input_variables, criteria, scoring_rubric, examples=None):
 
     return formatted_text
 
+def generate_example(criteria, scoring_rubric, input_variables, existing_example):
+    system_prompt = """You are an AI assistant tasked with generating an example for an evaluation metric. 
+    Based on the given criteria, scoring rubric, input variables, and an existing example, create a new, similar example."""
+
+    user_prompt = f"""
+    Criteria: {criteria}
+    Scoring Rubric: {scoring_rubric}
+    Input Variables: {input_variables}
+    Existing Example: {existing_example}
+
+    Please generate a new example in JSON format with the following fields:
+    - input    
+    - response
+    - score
+    - critique
+
+    and additionally, if included in the existing example:
+    - context
+    - reference 
+    """
+
+    if "reference" in input_variables:
+        user_prompt += "- reference\n"
+    if "context" in input_variables:
+        user_prompt += "- context\n"
+
+    user_prompt += "\nEnsure the example is similar in style but different in content from the existing example."
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    completion = openai_client.chat.completions.create(
+        model="gpt-3.5-turbo",
+        messages=messages
+    )
+
+    if completion.choices:
+        return completion.choices[0].message.content
+    else:
+        return None
+
+def get_latest_example_values(metric_name, index):
+
+    return {
+        'input': st.session_state.get(f"input_{metric_name}_{index}", ""),
+        'response': st.session_state.get(f"response_{metric_name}_{index}", ""),
+        'score': st.session_state.get(f"score_{metric_name}_{index}", ""),
+        'critique': st.session_state.get(f"critique_{metric_name}_{index}", ""),
+        'reference': st.session_state.get(f"reference_{metric_name}_{index}", ""),
+        'context': st.session_state.get(f"context_{metric_name}_{index}", "")
+    }
+
 def is_valid_variable_name(name):
     return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
 
@@ -275,15 +330,17 @@ if metric_name in st.session_state.custom_metrics:
     
     st.subheader("Few-shot examples")
 
-    # Dropdown to select example number
-    example_options = [f"Example {i}" for i in range(1, len(metric_data['examples']) + 1)]
-    example_number = st.selectbox("Select example", options=example_options)
 
 
     # Button to add a new example (up to 3)
     if len(metric_data['examples']) < 3 and st.button("Add another example"):
         metric_data['examples'].append({})
         st.experimental_rerun()  # Rerun to update the selectbox options
+
+    
+    # Dropdown to select example number
+    example_options = [f"Example {i}" for i in range(1, len(metric_data['examples']) + 1)]
+    example_number = st.selectbox("Select example", options=example_options)
 
     # Extract the number from the selected option
     selected_index = int(example_number.split()[-1]) - 1
@@ -399,6 +456,11 @@ else:
     # Fields for creating a new metric
     temp_metric_data = initialize_new_metric(metric_name)
     
+    if 'temp_metric_data' not in st.session_state: 
+        st.session_state.temp_metric_data = temp_metric_data
+    else:
+        temp_metric_data = st.session_state.temp_metric_data
+
     criteria = st.text_area("Criteria", value="", placeholder="Enter criteria here...")
     scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
     scoring_rubric = st.selectbox("Scoring Rubric", options=scoring_rubric_options, index=0)
@@ -418,52 +480,78 @@ else:
 
     # Initialize examples in session state if not present
     st.subheader("Few-shot examples")
-    
-    if 'num_examples' not in st.session_state:
-        st.session_state.num_examples = 1
 
     # Check if the metric name has changed
     if 'previous_metric_name' not in st.session_state or st.session_state.previous_metric_name != metric_name:
         # Reset the number of examples
-        st.session_state.num_examples = 1
+        st.session_state.selected_example = 0
+        st.session_state.previous_metric_name = metric_name
         # Reset temp_metric_data
         temp_metric_data = initialize_new_metric(metric_name)
-        # Update the previous metric name
-        st.session_state.previous_metric_name = metric_name
+    
+    temp_metric_data['examples'][0] = get_latest_example_values(metric_name, 0)
+    
+    if 'selected_example' not in st.session_state:
+        st.session_state.selected_example = 0
 
-    # Button to add a new example (up to 3)
-    if st.session_state.num_examples < 3 and st.button("Add another example"):
-        st.session_state.num_examples += 1
-        temp_metric_data['examples'].append({})
+    col1, col2 = st.columns(2)
+    with col1:
+        # Button to add a new example (up to 3)
+        if len(temp_metric_data['examples']) < 3 and st.button("Add another example"):
+            temp_metric_data['examples'].append({})
+            st.session_state.selected_example = len(temp_metric_data['examples']) - 1
+            st.session_state.temp_metric_data = temp_metric_data
+            st.experimental_rerun()
+
+    with col2:
+        # Button to generate a new example (up to 3)
+        if len(temp_metric_data['examples']) < 3 and st.button("Generate example"):
+            try:
+                with st.spinner("Generating example..."):
+                    existing_example = temp_metric_data['examples'][0]
+                    generated_example_json = generate_example(criteria, scoring_rubric, input_variables, str(existing_example))
+                    if generated_example_json:
+                        generated_example = json.loads(generated_example_json)
+                        temp_metric_data['examples'].append(generated_example)
+                        st.session_state.selected_example = len(temp_metric_data['examples']) - 1
+                        st.session_state.temp_metric_data = temp_metric_data
+                        st.success("New example generated successfully!")
+                        st.experimental_rerun()
+                    else:
+                        st.error("Failed to generate example.")
+            except Exception as e:
+                st.error(f"An error occurred: {str(e)}")
 
     # Create example options based on the number of examples in session state
-    example_options = [f"Example {i}" for i in range(1, st.session_state.num_examples + 1)]
-    example_number = st.selectbox("Select example", options=example_options)
+    example_options = [f"Example {i+1}" for i in range(len(temp_metric_data['examples']))]
+    selected_example = st.selectbox("Select example", options=example_options, index=st.session_state.selected_example)
 
     # Extract the number from the selected option
-    selected_index = int(example_number.split()[-1]) - 1
+    selected_index = int(selected_example.split()[-1]) - 1
+    st.session_state.selected_example = selected_index
+    
 
-    # Display fields for the selected example
-    with st.expander(example_number, expanded=True):
-        while len(temp_metric_data['examples']) <= selected_index:
-            temp_metric_data['examples'].append({})
+    with st.expander(selected_example, expanded=True):
         example = temp_metric_data['examples'][selected_index]
         
-        example['input'] = st.text_area("Input", value="", key=f"input_{metric_name}_{selected_index}", placeholder="Enter example input here...")
-        example['response'] = st.text_area("Response", value="", key=f"response_{metric_name}_{selected_index}", placeholder="Enter example response here...")
+        example['input'] = st.text_area("Input", value=example.get('input', ''), key=f"input_{metric_name}_{selected_index}", placeholder="Enter example input here...")
+        example['response'] = st.text_area("Response", value=example.get('response', ''), key=f"response_{metric_name}_{selected_index}", placeholder="Enter example response here...")
 
         # Conditional inputs based on selected input variables
         if "reference" in input_variables:
-            example['reference'] = st.text_area("Reference", value="", key=f"reference_{metric_name}_{selected_index}", placeholder="Enter example reference here...")
+            example['reference'] = st.text_area("Reference", value=example.get('reference', ''), key=f"reference_{metric_name}_{selected_index}", placeholder="Enter example reference here...")
         if "context" in input_variables:
-            example['context'] = st.text_area("Context", value="", key=f"context_{metric_name}_{selected_index}", placeholder="Enter example context here...")
+            example['context'] = st.text_area("Context", value=example.get('context', ''), key=f"context_{metric_name}_{selected_index}", placeholder="Enter example context here...")
 
-        example['score'] = st.text_input("Score", value="", key=f"score_{metric_name}_{selected_index}", placeholder="Enter example score here...")
-        example['critique'] = st.text_area("Critique", value="", key=f"critique_{metric_name}_{selected_index}", placeholder="Enter example critique here...")
+        example['score'] = st.text_input("Score", value=example.get('score', ''), key=f"score_{metric_name}_{selected_index}", placeholder="Enter example score here...")
+        example['critique'] = st.text_area("Critique", value=example.get('critique', ''), key=f"critique_{metric_name}_{selected_index}", placeholder="Enter example critique here...")
 
         # Update the temp metric data
         temp_metric_data['examples'][selected_index] = example
 
+    # After the loop, update the session state
+    st.session_state.temp_metric_data = temp_metric_data
+    
     # Combine all examples to form the 'Examples' variable
     examples = ""
     for i, example in enumerate(temp_metric_data['examples'], 1):
@@ -520,7 +608,6 @@ else:
                         "prompt": edited_prompt,
                         "examples": temp_metric_data['examples']
                     }                            
-                    st.write(f"Debug: Custom metrics after deployment: {st.session_state.custom_metrics}")
                     st.success(f"Metric '{metric_name}' deployed successfully!")
                     clear_temp_state
                     st.experimental_rerun()
