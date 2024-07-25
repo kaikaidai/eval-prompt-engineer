@@ -160,10 +160,8 @@ def is_valid_variable_name(name):
     return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
 
 def clear_temp_state():
-    if 'temp_prompt' in st.session_state:
-        del st.session_state.temp_prompt
-        print("temp_prompt deleted")
-    st.session_state.show_edit_prompt = False
+    del st.session_state.temp_prompt
+    del st.session_state.editing_metric
 
 def update_metric_name():
     if st.session_state.quick_select != "":
@@ -222,11 +220,6 @@ reserved_metric_info = {
 
 reserved_metrics = list(reserved_metric_info.keys())
 
-if 'custom_metrics' not in st.session_state:
-    st.session_state.custom_metrics = {}
-
-if 'editing_metric' not in st.session_state:
-    st.session_state.editing_metric = False
 
 ###
 st.title("Create Evaluation Metrics")
@@ -426,20 +419,34 @@ else:
     # Initialize examples in session state if not present
     st.subheader("Few-shot examples")
     
-    # Dropdown to select example number
-    example_options = [f"Example {i}" for i in range(1, len(temp_metric_data['examples']) + 1)]
-    example_number = st.selectbox("Select example", options=example_options)
+    if 'num_examples' not in st.session_state:
+        st.session_state.num_examples = 1
+
+    # Check if the metric name has changed
+    if 'previous_metric_name' not in st.session_state or st.session_state.previous_metric_name != metric_name:
+        # Reset the number of examples
+        st.session_state.num_examples = 1
+        # Reset temp_metric_data
+        temp_metric_data = initialize_new_metric(metric_name)
+        # Update the previous metric name
+        st.session_state.previous_metric_name = metric_name
 
     # Button to add a new example (up to 3)
-    if len(temp_metric_data['examples']) < 3 and st.button("Add another example"):
+    if st.session_state.num_examples < 3 and st.button("Add another example"):
+        st.session_state.num_examples += 1
         temp_metric_data['examples'].append({})
-        st.experimental_rerun()  # Rerun to update the selectbox options
+
+    # Create example options based on the number of examples in session state
+    example_options = [f"Example {i}" for i in range(1, st.session_state.num_examples + 1)]
+    example_number = st.selectbox("Select example", options=example_options)
 
     # Extract the number from the selected option
     selected_index = int(example_number.split()[-1]) - 1
 
     # Display fields for the selected example
     with st.expander(example_number, expanded=True):
+        while len(temp_metric_data['examples']) <= selected_index:
+            temp_metric_data['examples'].append({})
         example = temp_metric_data['examples'][selected_index]
         
         example['input'] = st.text_area("Input", value="", key=f"input_{metric_name}_{selected_index}", placeholder="Enter example input here...")
@@ -515,15 +522,14 @@ else:
                     }                            
                     st.write(f"Debug: Custom metrics after deployment: {st.session_state.custom_metrics}")
                     st.success(f"Metric '{metric_name}' deployed successfully!")
-                    del st.session_state.temp_prompt
-                    del st.session_state.editing_metric
+                    clear_temp_state
                     st.experimental_rerun()
         
                         
         with col2:
             if st.button("Clear"):
                 del st.session_state.temp_prompt
-                del st.session_state.editing_metric
+                clear_temp_state
                 st.experimental_rerun()
         with col3:
             if st.button("Regenerate Prompt"):
