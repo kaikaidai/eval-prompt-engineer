@@ -172,10 +172,6 @@ def generate_example(criteria, scoring_rubric, input_variables, existing_example
     - response
     - score
     - critique
-
-    and additionally, if included in the existing example:
-    - context
-    - reference 
     """
 
     if "reference" in input_variables:
@@ -217,13 +213,6 @@ def is_valid_variable_name(name):
 def clear_temp_state():
     del st.session_state.temp_prompt
     del st.session_state.editing_metric
-
-def update_metric_name():
-    if st.session_state.quick_select != "":
-        st.session_state.metric_name = st.session_state.quick_select
-    elif st.session_state.metric_name not in st.session_state.custom_metrics and st.session_state.metric_name not in reserved_metrics:
-        st.session_state.quick_select = ""
-        st.session_state.show_edit_prompt = False
 
 def initialize_new_metric(metric_name):
     return {
@@ -303,10 +292,8 @@ else:
 # Add a separator
 st.sidebar.markdown("---")
 
-metric_name = st.text_input("Metric Name", key="metric_name", placeholder="Enter a name for this metric...")
-
-                
-                
+#Metric name input
+metric_name = st.text_input("Metric Name", key="metric_name", placeholder="Enter a name for this metric...")                
 
 # Check if the metric name exists in custom_metrics
 if metric_name in st.session_state.custom_metrics:
@@ -329,8 +316,6 @@ if metric_name in st.session_state.custom_metrics:
     )
     
     st.subheader("Few-shot examples")
-
-
 
     # Button to add a new example (up to 3)
     if len(metric_data['examples']) < 3 and st.button("Add another example"):
@@ -409,6 +394,7 @@ if metric_name in st.session_state.custom_metrics:
                     st.error("Failed to regenerate prompt.")
             except Exception as e:
                 st.error(f"An error occurred: {str(e)}")
+
 elif metric_name in reserved_metrics:
     # Display information for reserved metrics
     metric_info = reserved_metric_info.get(metric_name, {})
@@ -456,10 +442,9 @@ else:
     # Fields for creating a new metric
     temp_metric_data = initialize_new_metric(metric_name)
     
+    # Initialising temp_metric_data in the session state as well if not already
     if 'temp_metric_data' not in st.session_state: 
         st.session_state.temp_metric_data = temp_metric_data
-    else:
-        temp_metric_data = st.session_state.temp_metric_data
 
     criteria = st.text_area("Criteria", value="", placeholder="Enter criteria here...")
     scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
@@ -611,8 +596,6 @@ else:
                     st.success(f"Metric '{metric_name}' deployed successfully!")
                     clear_temp_state
                     st.experimental_rerun()
-        
-                        
         with col2:
             if st.button("Clear"):
                 del st.session_state.temp_prompt
