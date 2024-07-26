@@ -445,6 +445,8 @@ else:
     # Initialising temp_metric_data in the session state as well if not already
     if 'temp_metric_data' not in st.session_state: 
         st.session_state.temp_metric_data = temp_metric_data
+    else:
+        temp_metric_data = st.session_state.temp_metric_data
 
     criteria = st.text_area("Criteria", value="", placeholder="Enter criteria here...")
     scoring_rubric_options = ["Likert: 1 - 5", "Binary: 0 or 1", "Float: 0 - 1"]
